@@ -145,8 +145,12 @@ async function ensureAudio() {
     })();
   }
   await audioPromise;
-  if (audioCtx.state === "suspended") {
-    await audioCtx.resume();
+  if (audioCtx && audioCtx.state === "suspended") {
+    try {
+      await audioCtx.resume();
+    } catch (e) {
+      /* Autoplay policy: resume on the next user gesture. */
+    }
   }
 }
 
@@ -181,8 +185,13 @@ function playMusic(file, loop) {
 }
 
 async function startIntroMusic() {
-  await ensureAudio();
-  if (audioCtx.state === "suspended") return;
+  try {
+    await ensureAudio();
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+  if (!audioCtx || audioCtx.state === "suspended") return;
   if (introStarted) return;
   introStarted = true;
   playMusic("intro.wav", false);
@@ -860,7 +869,7 @@ async function startRun() {
   if (screen_height < 1) screen_height = 1;
   resetRunState();
   introStarted = false;
-  await startIntroMusic();
+  startIntroMusic();
   await showIntro();
 }
 
@@ -922,9 +931,10 @@ document.addEventListener(
   setCanvasBg("#000");
   render();
   try {
-    await Promise.all([preloadGameplayAssets(), ensureAudio()]);
+    await preloadGameplayAssets();
   } catch (e) {
     console.error(e);
   }
+  startIntroMusic();
   await startRun();
 })();
