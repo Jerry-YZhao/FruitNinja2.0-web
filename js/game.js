@@ -13,13 +13,10 @@ ctx.imageSmoothingEnabled = true;
 ctx.imageSmoothingQuality = "high";
 
 const imageCache = {};
-const audioBuffers = {};
+const audioEls = {};
 
-let audioCtx = null;
 let currentMusic = null;
 let introStarted = false;
-let audioReady = false;
-let audioPromise = null;
 
 let screen_width = 0;
 let screen_height = 0;
@@ -130,71 +127,67 @@ function loadImage(file) {
   });
 }
 
-async function ensureAudio() {
-  if (!audioPromise) {
-    audioPromise = (async () => {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      await Promise.all(
-        SFX_FILES.map(async (file) => {
-          const res = await fetch(ASSET(file));
-          const buf = await res.arrayBuffer();
-          audioBuffers[file] = await audioCtx.decodeAudioData(buf.slice(0));
-        })
-      );
-      audioReady = true;
-    })();
-  }
-  await audioPromise;
-  if (audioCtx && audioCtx.state === "suspended") {
-    try {
-      await audioCtx.resume();
-    } catch (e) {
-      /* Autoplay policy: resume on the next user gesture. */
+function getAudio(file) {
+  if (file === "intro.wav") {
+    const intro = document.getElementById("intro-music");
+    if (intro) {
+      audioEls[file] = intro;
+      return intro;
     }
   }
+  if (!audioEls[file]) {
+    const el = new Audio(ASSET(file));
+    el.preload = "auto";
+    audioEls[file] = el;
+  }
+  return audioEls[file];
+}
+
+function preloadAudio() {
+  SFX_FILES.forEach((file) => getAudio(file));
 }
 
 function playSfx(file) {
-  if (!audioCtx || !audioBuffers[file]) return;
-  const src = audioCtx.createBufferSource();
-  src.buffer = audioBuffers[file];
-  src.connect(audioCtx.destination);
-  src.start();
+  const src = getAudio(file);
+  const el = src.cloneNode();
+  el.play().catch(() => {});
 }
 
 function stopMusic() {
   if (currentMusic) {
-    try {
-      currentMusic.stop();
-    } catch (e) {
-      /* already stopped */
-    }
+    currentMusic.pause();
+    currentMusic.currentTime = 0;
     currentMusic = null;
   }
 }
 
 function playMusic(file, loop) {
   stopMusic();
-  if (!audioCtx || !audioBuffers[file]) return;
-  const src = audioCtx.createBufferSource();
-  src.buffer = audioBuffers[file];
-  src.loop = !!loop;
-  src.connect(audioCtx.destination);
-  src.start();
-  currentMusic = src;
+  const el = getAudio(file);
+  el.loop = !!loop;
+  el.currentTime = 0;
+  currentMusic = el;
+  return el.play().catch(() => {
+    if (currentMusic === el) currentMusic = null;
+  });
 }
 
-async function startIntroMusic() {
-  try {
-    await ensureAudio();
-  } catch (e) {
-    console.error(e);
+function startIntroMusic() {
+  const el = getAudio("intro.wav");
+  if (!el.paused && !el.ended) {
+    introStarted = true;
+    currentMusic = el;
     return;
   }
-  if (!audioCtx || audioCtx.state === "suspended") return;
   if (introStarted) return;
-  introStarted = true;
-  playMusic("intro.wav", false);
+  el.loop = false;
+  el.currentTime = 0;
+  el.play()
+    .then(() => {
+      introStarted = true;
+      currentMusic = el;
+    })
+    .catch(() => {});
 }
 
 function setCursor(kind) {
@@ -676,6 +669,7 @@ async function showIntro() {
   createTextItem(screen_width / 2, screen_height * 0.8, "Please Enter Your Name Here:", 15, "white");
   render();
   const nameEntry = addNameEntry(screen_width / 2, screen_height * 0.85, screen_width / 3, screen_height * 0.05);
+  nameEntry.focus();
   addImageButton("go_button.png", screen_width / 2, screen_height * 0.95, screen_width / 10, screen_width / 10, () => {
     player_name = nameEntry.value;
     getName();
@@ -917,13 +911,12 @@ window.addEventListener("resize", () => {
   }
 });
 
-document.addEventListener(
-  "pointerdown",
-  () => {
-    startIntroMusic();
-  },
-  { capture: true }
-);
+["pointerdown", "keydown", "touchstart"].forEach((type) => {
+  document.addEventListener(type, startIntroMusic, { capture: true });
+});
+
+preloadAudio();
+startIntroMusic();
 
 (async function boot() {
   setCursor("tcross");
